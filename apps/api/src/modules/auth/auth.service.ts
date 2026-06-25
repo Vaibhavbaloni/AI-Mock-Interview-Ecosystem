@@ -140,6 +140,9 @@ export class AuthService {
   }
 
   async refresh(token: string): Promise<{ accessToken: string }> {
+    if (!token) {
+      throw new AuthenticationError('Invalid or expired refresh token');
+    }
     const storedToken = await prisma.refreshToken.findUnique({
       where: { token },
       include: { user: true },
@@ -156,6 +159,7 @@ export class AuthService {
   }
 
   async logout(token: string) {
+    if (!token) return;
     try {
       await prisma.refreshToken.update({
         where: { token },

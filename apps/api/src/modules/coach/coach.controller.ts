@@ -44,22 +44,17 @@ export class CoachController {
       });
     }
 
-    // Fetch speech diagnostics
-    let speech = await prisma.userSpeechPatterns.findUnique({
+    // Fetch speech diagnostics and seed defaults atomically if empty to prevent race conditions
+    const speech = await prisma.userSpeechPatterns.upsert({
       where: { userId },
+      update: {},
+      create: {
+        userId,
+        fillerWordRatio: 0.04,
+        averagePacingWpm: 135,
+        detectedToneProfile: 'Calm & Professional',
+      },
     });
-
-    // Seed defaults if empty
-    if (!speech) {
-      speech = await prisma.userSpeechPatterns.create({
-        data: {
-          userId,
-          fillerWordRatio: 0.04,
-          averagePacingWpm: 135,
-          detectedToneProfile: 'Calm & Professional',
-        },
-      });
-    }
 
     return successResponse(
       res,

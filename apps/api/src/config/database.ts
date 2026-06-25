@@ -514,13 +514,46 @@ const prismaProxy = new Proxy(actualPrisma, {
       };
     }
 
-    if (isPostgresConnected) {
-      return Reflect.get(target, prop, receiver);
-    }
-
     const modelName = String(prop);
     if (modelName.startsWith('$')) {
       return Reflect.get(target, prop, receiver);
+    }
+
+    if (isPostgresConnected) {
+      const model = Reflect.get(target, prop, receiver);
+      if (typeof model === 'object' && model !== null) {
+        return new Proxy(model, {
+          get(modelTarget, modelProp) {
+            const originalMethod = Reflect.get(modelTarget, modelProp);
+            if (typeof originalMethod === 'function') {
+              return async (...args: any[]) => {
+                try {
+                  return await originalMethod.apply(modelTarget, args);
+                } catch (err: any) {
+                  const isConnectionErr = 
+                    err.code?.startsWith('P10') || 
+                    err.message?.includes("Can't reach database server") ||
+                    err.message?.includes("connection") ||
+                    err.message?.includes("timeout");
+                  
+                  if (isConnectionErr) {
+                    logger.warn(`⚠️ PostgreSQL connection lost during ${modelName}.${String(modelProp)}. Switching to Mock DB.`);
+                    isPostgresConnected = false;
+                    const mockHandler = createMockHandler(modelName);
+                    const mockMethod = Reflect.get(mockHandler, modelProp);
+                    if (typeof mockMethod === 'function') {
+                      return await mockMethod.apply(mockHandler, args);
+                    }
+                  }
+                  throw err;
+                }
+              };
+            }
+            return originalMethod;
+          }
+        });
+      }
+      return model;
     }
 
     return createMockHandler(modelName);
@@ -541,13 +574,16 @@ export async function connectPostgres() {
 export async function connectMongoDB(uri: string) {
   try {
     mongoose.set('strictQuery', false);
+    mongoose.set('bufferCommands', false);
     await mongoose.connect(uri, {
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 2000, // Reduced to 2 seconds for faster failover
       socketTimeoutMS: 45000,
+      bufferCommands: false,
     });
     logger.info('✅ MongoDB connected via Mongoose');
   } catch (error) {
     logger.error('⚠️ MongoDB connection failed on startup. Server will continue booting, Mongoose will use Mock DB.', error);
   }
 }
+
